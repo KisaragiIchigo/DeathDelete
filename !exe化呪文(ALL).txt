@@ -1,0 +1,12 @@
+pyinstaller MainApp.py --onefile --noconsole 
+pyinstaller setup.py --onefile --noconsole 
+pyinstaller  encryption_key.py  --onefile --noconsole
+pyinstaller DeleteApp.py --onefile --noconsole
+pyinstaller delset.py ^
+  --onefile ^
+  --noconsole ^
+  --clean ^
+  --hidden-import=tkinterdnd2 ^
+  --hidden-import=customtkinter ^
+  --hidden-import=cryptography.fernet ^
+  --collect-all tkinterdnd2

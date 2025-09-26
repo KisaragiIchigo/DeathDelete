@@ -1,0 +1,8 @@
+pyinstaller delset.py ^
+  --onefile ^
+  --noconsole ^
+  --clean ^
+  --hidden-import=tkinterdnd2 ^
+  --hidden-import=customtkinter ^
+  --hidden-import=cryptography.fernet ^
+  --collect-all tkinterdnd2

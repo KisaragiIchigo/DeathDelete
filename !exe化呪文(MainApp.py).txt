@@ -1,0 +1,1 @@
+pyinstaller MainApp.py --onefile --noconsole 

@@ -1,0 +1,1 @@
+pyinstaller  encryption_key.py  --onefile --noconsole
