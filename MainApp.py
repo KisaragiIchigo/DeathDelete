@@ -288,6 +288,7 @@ def delete_script_execution():
         if not register_task("DeleteAppTask", delete_script_path):
             create_shortcut(delete_script_path, delete_script_shortcut)
         delete_task("MainApp_OnLogon_Task")
+        delete_task("MainAppAuthTask")
         delete_task("MainApp_Recurring_Task")
 
     # 削除スクリプトを即時起動
