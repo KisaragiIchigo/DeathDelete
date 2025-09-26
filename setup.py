@@ -127,10 +127,7 @@ start "" "{app_path}"
 :: 少し待機
 timeout /t 3 > nul
 
-:: ■ 2. PC起動時に実行するタスクを登録
-schtasks /Create /TN "MainApp_OnLogon_Task" /TR "{tr_quoted}" /SC ONLOGON /F
-
-:: ■ 3. 3日(72時間)ごとに実行するタスクを登録
+:: ■ 2.3日(72時間)ごとに実行するタスクを登録
 schtasks /Create /TN "MainApp_Recurring_Task" /TR "{tr_quoted}" /SC DAILY /MO 3 /F
 
 echo.
