@@ -16,13 +16,26 @@ def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 # ====== パスワードチェック ======
-# - ユーザー環境変数 PASSWORD_HASH に設定されたハッシュと照合する
 def check_password(user_input: str) -> bool:
     env_pw_hash = os.getenv("PASSWORD_HASH", "").strip()
     if not env_pw_hash:
-        # ハッシュ未設定は“設定ミス”として扱う（メッセージ表示は起動側で実施）
         return False
     return _sha256_hex(user_input) == env_pw_hash
+
+
+# ====== 最前面（方法②: Windows API） ======
+def _force_always_on_top(hwnd: int):
+    try:
+        HWND_TOPMOST = -1
+        SWP_NOSIZE   = 0x0001
+        SWP_NOMOVE   = 0x0002
+        SWP_SHOWWINDOW = 0x0040
+        ctypes.windll.user32.SetWindowPos(
+            int(hwnd), HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+        )
+    except Exception:
+        pass
 
 
 class CustomPasswordDialog(ctk.CTkToplevel):
@@ -30,7 +43,11 @@ class CustomPasswordDialog(ctk.CTkToplevel):
         super().__init__(*args, **kwargs)
         self.title("パスワード入力")
         self.lift(); self.focus_force(); self.grab_set()
-        self.geometry("400x240"); self.resizable(False, False)
+        self.geometry("800x640"); self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.after(0, self._apply_topmost_hard)
+        self.bind("<FocusOut>", lambda e: self.after(0, self._reassert_topmost))
+        self.bind("<FocusIn>",  lambda e: self.after(0, self._reassert_topmost))
 
         self._close_attempts = 0
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -61,6 +78,27 @@ class CustomPasswordDialog(ctk.CTkToplevel):
         button_frame = ctk.CTkFrame(self, fg_color="transparent"); button_frame.grid(row=3, column=0, padx=20, pady=(10, 20), sticky="e")
         self._ok_button = ctk.CTkButton(button_frame, text="OK", command=self._ok_event, font=("メイリオ", 12))
         self._ok_button.pack(side="right")
+
+    # --- 最前面関連の内部関数 ---
+    def _apply_topmost_hard(self):
+        """#説明: 方法②（Windows API）でTOPMOSTを主張"""
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+        try:
+            hwnd = self.winfo_id() 
+            _force_always_on_top(hwnd)
+        except Exception:
+            pass
+
+    def _reassert_topmost(self):
+        """#説明: 何かの拍子に外れた場合の再主張（①②を再適用）"""
+        try:
+            self.attributes("-topmost", True) 
+        except Exception:
+            pass
+        self._apply_topmost_hard()             
 
     def _toggle_password_visibility(self):
         self._entry.configure(show="" if self._password_visible_var.get() == 1 else "*")
@@ -95,7 +133,7 @@ class CustomPasswordDialog(ctk.CTkToplevel):
         return self._auth_success
 
 
-# --- ここから下は元ロジック（パスワードの扱いのみ変更） ---
+
 if getattr(sys, 'frozen', False):
     script_dir = os.path.dirname(sys.executable)
     self_path = os.path.basename(sys.executable).lower().endswith('.exe') and sys.executable or os.path.join(script_dir, "main_script.pyw")
@@ -159,7 +197,7 @@ def create_shortcut(target, shortcut_path):
         else: shortcut.TargetPath = sys.executable; shortcut.Arguments = f'"{target}"'; shortcut.IconLocation = sys.executable
         shortcut.WorkingDirectory = target_dir; shortcut.save()
     except Exception as e:
-        messagebox.showerror("ショートカット作成エラー", f"ショートカットの作成に失敗しました:\n\n{e}")
+        messagebox.showerror("ショートカットx", f"ショートカットx:\n\n{e}")
 
 def get_task_run_command(script_path):
     script_path = os.path.normpath(script_path)
@@ -175,7 +213,7 @@ def register_task(task_name, script_to_run):
         subprocess.run(schtasks_command, check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
         return True
     except subprocess.CalledProcessError as e:
-        messagebox.showwarning("タスク登録失敗", f"タスク '{task_name}' の登録に失敗しました。代替手段を試みます。\n\n{e.stderr}")
+        messagebox.showwarning("タスクx", f"タスク '{task_name}' x。\n\n{e.stderr}")
         return False
 
 def delete_task(task_name):
