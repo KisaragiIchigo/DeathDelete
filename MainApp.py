@@ -1,7 +1,6 @@
 import os
 import subprocess
 import time
-import threading
 import customtkinter as ctk
 import sys
 from win32com.client import Dispatch
@@ -9,7 +8,7 @@ import configparser
 from cryptography.fernet import Fernet
 from tkinter import messagebox
 import ctypes
-import hashlib  
+import hashlib
 
 # ====== ハッシュ関数 ======
 def _sha256_hex(s: str) -> str:
@@ -39,6 +38,12 @@ def _force_always_on_top(hwnd: int):
 
 
 class CustomPasswordDialog(ctk.CTkToplevel):
+    """
+    #説明
+    - パスワードを3回ミスで削除スクリプトを起動する（_delete_callback）
+    - 成功時は self._auth_success=True にして閉じる
+    - フォーカス/最前面をしつこく維持
+    """
     def __init__(self, delete_callback, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.title("パスワード入力")
@@ -68,8 +73,10 @@ class CustomPasswordDialog(ctk.CTkToplevel):
         self._entry.bind("<Return>", self._ok_event); self._entry.focus()
 
         self._password_visible_var = ctk.IntVar(value=0)
-        self._view_checkbox = ctk.CTkCheckBox(entry_frame, text="表示", font=("メイリオ", 12),
-                                              variable=self._password_visible_var, command=self._toggle_password_visibility)
+        self._view_checkbox = ctk.CTkCheckBox(
+            entry_frame, text="表示", font=("メイリオ", 12),
+            variable=self._password_visible_var, command=self._toggle_password_visibility
+        )
         self._view_checkbox.grid(row=0, column=1, padx=(10, 0))
 
         self._status_label = ctk.CTkLabel(self, text="", font=("メイリオ", 12), text_color="yellow", wraplength=360)
@@ -87,23 +94,24 @@ class CustomPasswordDialog(ctk.CTkToplevel):
         except Exception:
             pass
         try:
-            hwnd = self.winfo_id() 
+            hwnd = self.winfo_id()
             _force_always_on_top(hwnd)
         except Exception:
             pass
 
     def _reassert_topmost(self):
-        """#説明: 何かの拍子に外れた場合の再主張（①②を再適用）"""
+        """#説明: 外れた場合の再主張"""
         try:
-            self.attributes("-topmost", True) 
+            self.attributes("-topmost", True)
         except Exception:
             pass
-        self._apply_topmost_hard()             
+        self._apply_topmost_hard()
 
     def _toggle_password_visibility(self):
         self._entry.configure(show="" if self._password_visible_var.get() == 1 else "*")
 
     def _on_closing(self):
+        # 誤って閉じようとするのを数回まで抑止、3回目で削除手続
         self._close_attempts += 1
         if self._close_attempts >= 3:
             self._delete_callback()
@@ -115,7 +123,7 @@ class CustomPasswordDialog(ctk.CTkToplevel):
             self._status_label.configure(text="認証に成功しました。", text_color="lightgreen")
             self._auth_success = True
             self._ok_button.configure(state="disabled"); self._entry.configure(state="disabled")
-            self.after(600, self.destroy)
+            self.after(400, self.destroy)   # 少し待って閉じる
         else:
             self._attempts += 1
             remaining = self._max_attempts - self._attempts
@@ -125,18 +133,20 @@ class CustomPasswordDialog(ctk.CTkToplevel):
             else:
                 self._status_label.configure(text="セキュリティ解除を実行します。", text_color="lightgreen")
                 self._ok_button.configure(state="disabled")
-                self.after(400, self._delete_callback)
-                self.after(2000, self.destroy)
+                self.after(300, self._delete_callback)
+                self.after(1500, self.destroy)
 
     def get_result(self):
+        # 親（root）でダイアログの終了を待つ
         self.master.wait_window(self)
         return self._auth_success
 
 
-
+# ===== 実行パス/設定ファイル =====
 if getattr(sys, 'frozen', False):
     script_dir = os.path.dirname(sys.executable)
-    self_path = os.path.basename(sys.executable).lower().endswith('.exe') and sys.executable or os.path.join(script_dir, "main_script.pyw")
+    self_path = (os.path.basename(sys.executable).lower().endswith('.exe') and
+                 sys.executable) or os.path.join(script_dir, "main_script.pyw")
     if not isinstance(self_path, str):  # 保険
         self_path = sys.executable
 else:
@@ -144,113 +154,163 @@ else:
     self_path = os.path.abspath(__file__)
 
 CONFIG_FILE = os.path.join(script_dir, "yummy.ini")
-KEY_FILE = os.path.join(script_dir, "secret.key")
+KEY_FILE    = os.path.join(script_dir, "secret.key")
 
 def is_admin():
-    try: return ctypes.windll.shell32.IsUserAnAdmin()
-    except: return False
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
 
 def load_key():
-    if not os.path.exists(KEY_FILE): return None
+    if not os.path.exists(KEY_FILE):
+        return None
     try:
-        with open(KEY_FILE, "rb") as key_file: return key_file.read()
-    except: return None
+        with open(KEY_FILE, "rb") as key_file:
+            return key_file.read()
+    except:
+        return None
 
 def decrypt_data(encrypted_data, key):
-    if not key or not encrypted_data: return None
+    if not key or not encrypted_data:
+        return None
     try:
-        f = Fernet(key); return f.decrypt(encrypted_data).decode('utf-8')
-    except: return None
+        f = Fernet(key)
+        return f.decrypt(encrypted_data).decode('utf-8')
+    except:
+        return None
 
 def get_delete_script_path():
     key = load_key()
-    if not key or not os.path.exists(CONFIG_FILE): return None
+    if not key or not os.path.exists(CONFIG_FILE):
+        return None
     config = configparser.ConfigParser()
     try:
-        with open(CONFIG_FILE, 'rb') as f: encrypted_data = f.read()
+        with open(CONFIG_FILE, 'rb') as f:
+            encrypted_data = f.read()
         decrypted_string = decrypt_data(encrypted_data, key)
-        if not decrypted_string: return None
-        config.read_string(decrypted_string); return config.get('Settings', 'delete_script_path', fallback=None)
-    except Exception: return None
+        if not decrypted_string:
+            return None
+        config.read_string(decrypted_string)
+        return config.get('Settings', 'delete_script_path', fallback=None)
+    except Exception:
+        return None
 
 delete_script_path = get_delete_script_path()
-timeout_occurred = False
 
+# ===== スタートアップ/タスク関連 =====
 try:
     shell = Dispatch('WScript.Shell')
     startup_folder = shell.SpecialFolders('Startup')
     main_script_shortcut = os.path.join(startup_folder, "MainAppAuth.lnk")
     delete_script_shortcut = os.path.join(startup_folder, "DeleteApp.lnk")
 except Exception:
-    startup_folder = None; main_script_shortcut = None; delete_script_shortcut = None
+    startup_folder = None
+    main_script_shortcut = None
+    delete_script_shortcut = None
 
 def create_shortcut(target, shortcut_path):
-    if not shortcut_path: return
+    if not shortcut_path:
+        return
     target = os.path.normpath(target)
     target_dir = os.path.dirname(target)
-    if not os.path.exists(target_dir): os.makedirs(target_dir, exist_ok=True)
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
     try:
-        shell = Dispatch('WScript.Shell'); shortcut = shell.CreateShortCut(shortcut_path)
+        shell = Dispatch('WScript.Shell')
+        shortcut = shell.CreateShortCut(shortcut_path)
         ext = os.path.splitext(target)[1].lower()
-        if ext == '.exe': shortcut.TargetPath = target; shortcut.Arguments = ""; shortcut.IconLocation = target
-        elif ext == '.pyw': shortcut.TargetPath = sys.executable.replace("python.exe", "pythonw.exe"); shortcut.Arguments = f'"{target}"'; shortcut.IconLocation = shortcut.TargetPath
-        else: shortcut.TargetPath = sys.executable; shortcut.Arguments = f'"{target}"'; shortcut.IconLocation = sys.executable
-        shortcut.WorkingDirectory = target_dir; shortcut.save()
+        if ext == '.exe':
+            shortcut.TargetPath = target
+            shortcut.Arguments = ""
+            shortcut.IconLocation = target
+        elif ext == '.pyw':
+            shortcut.TargetPath = sys.executable.replace("python.exe", "pythonw.exe")
+            shortcut.Arguments = f'"{target}"'
+            shortcut.IconLocation = shortcut.TargetPath
+        else:
+            shortcut.TargetPath = sys.executable
+            shortcut.Arguments = f'"{target}"'
+            shortcut.IconLocation = sys.executable
+        shortcut.WorkingDirectory = target_dir
+        shortcut.save()
     except Exception as e:
-        messagebox.showerror("ショートカットx", f"ショートカットx:\n\n{e}")
+        messagebox.showerror("ショートカット✕", f"ショートカット✕:\n\n{e}")
 
 def get_task_run_command(script_path):
     script_path = os.path.normpath(script_path)
     ext = os.path.splitext(script_path)[1].lower()
-    if ext == '.exe': return f'"{script_path}"'
-    elif ext == '.pyw': return f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{script_path}"'
-    else: return f'"{sys.executable}" "{script_path}"'
+    if ext == '.exe':
+        return f'"{script_path}"'
+    elif ext == '.pyw':
+        return f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{script_path}"'
+    else:
+        return f'"{sys.executable}" "{script_path}"'
 
 def register_task(task_name, script_to_run):
+    """#説明: ログオン時に最高権限で起動するタスクを登録"""
     command = get_task_run_command(script_to_run)
-    schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', command, '/SC', 'ONLOGON', '/F', '/RL', 'HIGHEST']
+    schtasks_command = [
+        'schtasks', '/Create', '/TN', task_name, '/TR', command,
+        '/SC', 'ONLOGON', '/F', '/RL', 'HIGHEST'
+    ]
     try:
-        subprocess.run(schtasks_command, check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.run(
+            schtasks_command, check=True, capture_output=True, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
         return True
     except subprocess.CalledProcessError as e:
-        messagebox.showwarning("タスクx", f"タスク '{task_name}' x。\n\n{e.stderr}")
+        messagebox.showwarning("タスク作成警告", f"タスク '{task_name}' の作成に失敗しました。\n\n{e.stderr}")
         return False
 
 def delete_task(task_name):
     schtasks_command = ['schtasks', '/Delete', '/TN', task_name, '/F']
     try:
-        subprocess.run(schtasks_command, check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.run(
+            schtasks_command, check=True, capture_output=True, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
         return True
-    except subprocess.CalledProcessError: return False
+    except subprocess.CalledProcessError:
+        return False
 
 def delete_script_execution():
+    # 既存のメインタスクを消す or スタートアップショートカットを消す
     if not delete_task("MainAppAuthTask"):
         if main_script_shortcut and os.path.exists(main_script_shortcut):
-            try: os.remove(main_script_shortcut)
-            except: pass
+            try:
+                os.remove(main_script_shortcut)
+            except:
+                pass
+
     if delete_script_path and os.path.exists(delete_script_path):
         if not register_task("DeleteAppTask", delete_script_path):
             create_shortcut(delete_script_path, delete_script_shortcut)
         delete_task("MainApp_OnLogon_Task")
-        delete_task("MainApp_Recurring_Task") 
-    ext = os.path.splitext(delete_script_path)[1].lower()
-    command = []
-    if ext == '.exe': command = [delete_script_path]
-    elif ext == '.pyw': command = [sys.executable.replace("python.exe", "pythonw.exe"), delete_script_path]
-    else: command = [sys.executable, delete_script_path]
-    flags = subprocess.CREATE_NO_WINDOW if ext == '.py' else 0
-    subprocess.Popen(command, creationflags=flags)
-    time.sleep(5)
+        delete_task("MainApp_Recurring_Task")
 
-def timeout_function():
-    # 259200秒 = 72時間
-    global timeout_occurred
-    time.sleep(259200)
-    if not timeout_occurred:
-        timeout_occurred = True; delete_script_execution(); app.quit()
+    # 削除スクリプトを即時起動
+    ext = os.path.splitext(delete_script_path or "")[1].lower()
+    if ext == '.exe':
+        command = [delete_script_path]
+        flags = 0
+    elif ext == '.pyw':
+        command = [sys.executable.replace("python.exe", "pythonw.exe"), delete_script_path]
+        flags = subprocess.CREATE_NO_WINDOW
+    else:
+        command = [sys.executable, (delete_script_path or "")]
+        flags = subprocess.CREATE_NO_WINDOW
+    try:
+        subprocess.Popen(command, creationflags=flags)
+    except Exception:
+        pass
+    time.sleep(2) 
 
+
+# ===== エントリーポイント =====
 if __name__ == "__main__":
-    # 先に PASSWORD_HASH の存在チェック（未設定なら明確に案内）
+    # 1) 環境変数チェック
     if not os.getenv("PASSWORD_HASH"):
         root = ctk.CTk(); root.withdraw()
         messagebox.showerror(
@@ -261,33 +321,48 @@ if __name__ == "__main__":
         )
         sys.exit(2)
 
+    # 2) 管理者権限で上げ直し
     if not is_admin():
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
         sys.exit()
 
+    # 3) 削除スクリプトの設定確認
     if not delete_script_path:
         root = ctk.CTk(); root.withdraw()
         messagebox.showerror("致命的なエラー", f"削除用スクリプトのパスが設定されていません。\n'{CONFIG_FILE}'を確認してください。")
-        sys.exit()
+        sys.exit(3)
 
+    # 4) ルート生成
     app = ctk.CTk(); app.withdraw()
     ctk.set_appearance_mode("dark"); ctk.set_default_color_theme("blue")
 
-    timeout_thread = threading.Thread(target=timeout_function, daemon=True); timeout_thread.start()
-
-    # ダイアログに「delete_script_execution」を渡す（×3回等で実行）
+    # 5) パスワードダイアログ（3回ミスで delete_script_execution が呼ばれる）
     dialog = CustomPasswordDialog(delete_script_execution)
     auth_successful = dialog.get_result()
 
+    # 6) 成功時は即タスク登録→終了
     if auth_successful:
-        timeout_occurred = True
-        if not register_task("MainAppAuthTask", self_path):
-            create_shortcut(self_path, main_script_shortcut)
-            if delete_script_shortcut and os.path.exists(delete_script_shortcut):
-                try: os.remove(delete_script_shortcut)
-                except: pass
+        if register_task("MainAppAuthTask", self_path):
             delete_task("DeleteAppTask")
-    else:
-        sys.exit()
 
-    app.mainloop()
+            if delete_script_shortcut and os.path.exists(delete_script_shortcut):
+                try:
+                    os.remove(delete_script_shortcut)
+                except:
+                    pass
+        else:
+            create_shortcut(self_path, main_script_shortcut)
+            delete_task("DeleteAppTask")
+
+        try:
+            app.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    # 7) 失敗時
+    try:
+        app.destroy()
+    except Exception:
+        pass
+    sys.exit(1)
